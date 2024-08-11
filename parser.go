@@ -6,9 +6,12 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 )
 
-var promTagCache = make(map[string]*promTag, 1024)
+var promTagCache sync.Map
+
+// var promTagCache = make(map[string]*promTag, 1024)
 
 //// Metricer 定义指标接口, 实现此接口的 struct 可以通过 tag 标记,自动解析成metric
 //type Metricer interface {
@@ -56,16 +59,17 @@ var mTypeMapping = map[string]metricType{
 // 解析 struct 的 tag 为 promTag
 // prom: "help: some help;type: counter;metricName: request_total;labelName: host;valuePrecision:2"
 func parseTag(tagRaw string) *promTag {
-	if cValue, ok := promTagCache[tagRaw]; ok {
-		return cValue
+	if cValue, ok := promTagCache.Load(tagRaw); ok {
+		return cValue.(*promTag)
 	}
 	var pt = promTag{
-		Help:       "",
-		Type:       Gauge,
-		IsMetric:   false,
-		IsLabel:    false,
-		MetricName: "",
-		LabelName:  "",
+		Help:           "",
+		Type:           Gauge,
+		IsMetric:       false,
+		IsLabel:        false,
+		MetricName:     "",
+		LabelName:      "",
+		ValuePrecision: 2,
 	}
 
 	promTags := strings.Split(strings.TrimSpace(tagRaw), ";")
@@ -98,8 +102,6 @@ func parseTag(tagRaw string) *promTag {
 		case "valuePrecision":
 			if value, err := strconv.ParseInt(strings.TrimSpace(kv[1]), 10, 8); err != nil {
 				pt.ValuePrecision = int(value)
-			} else {
-				pt.ValuePrecision = 2
 			}
 		}
 	}
@@ -108,7 +110,7 @@ func parseTag(tagRaw string) *promTag {
 		pt.IsMetric = false
 	}
 	// tag 的解析缓存, prom 标签后的字符串为key
-	promTagCache[tagRaw] = &pt
+	promTagCache.Store(tagRaw, &pt)
 	return &pt
 }
 
