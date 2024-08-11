@@ -9,6 +9,6 @@ type PromError struct {
 //
 // 返回值:
 // string - 错误消息，提供了关于错误的详细信息。
-func (pe PromError) Error() string {
-	return pe.Msg
+func (e PromError) Error() string {
+	return e.Msg
 }

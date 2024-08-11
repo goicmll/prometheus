@@ -72,6 +72,12 @@ func parseTag(tagRaw string) *promTag {
 		ValuePrecision: 2,
 	}
 
+	if tagRaw == "" {
+		// 直接返回默认的 promTag 实例，因为输入为空
+		promTagCache.Store(tagRaw, &pt)
+		return &pt
+	}
+
 	promTags := strings.Split(strings.TrimSpace(tagRaw), ";")
 	for _, tag := range promTags {
 		tag = strings.TrimSpace(tag)
@@ -100,15 +106,17 @@ func parseTag(tagRaw string) *promTag {
 				pt.IsLabel = true
 			}
 		case "valuePrecision":
-			if value, err := strconv.ParseInt(strings.TrimSpace(kv[1]), 10, 8); err != nil {
+			if value, err := strconv.ParseInt(strings.TrimSpace(kv[1]), 10, 8); err == nil {
 				pt.ValuePrecision = int(value)
 			}
 		}
 	}
+
 	// 没有声明 help, 忽略指标
 	if pt.Help == "" {
 		pt.IsMetric = false
 	}
+
 	// tag 的解析缓存, prom 标签后的字符串为key
 	promTagCache.Store(tagRaw, &pt)
 	return &pt
@@ -124,7 +132,7 @@ func Parse(s any, mnPrefix string, externalLabels ...map[string]string) ([]*Samp
 	}
 	var samples = make([]*Sample, 0, 32)
 
-	label := make(map[string]string, 8)
+	parsedLabels := make(map[string]string, 8)
 	excludeLabel := make(map[string]string, 8)
 
 	reflectType := reflect.TypeOf(s)
@@ -139,15 +147,23 @@ func Parse(s any, mnPrefix string, externalLabels ...map[string]string) ([]*Samp
 	for i := 0; i < reflectType.NumField(); i++ {
 		fieldName := reflectType.Field(i).Name
 		fieldValue := reflectValue.FieldByName(fieldName)
+		var strValue string
+		if fieldValue.CanInterface() && fieldValue.Interface() != nil {
+			strValue = fmt.Sprint(fieldValue.Interface())
+			// 使用 strValue 进行后续操作
+		} else {
+			return nil, PromError{"字段 " + fieldName + " 的值无法转换为字符串"}
+		}
 		pt := parseTag(reflectType.Field(i).Tag.Get("prom"))
 
 		// 忽略
 		if !(pt.IsLabel || pt.IsMetric) {
 			continue
 		}
+
 		// 设置解析的标签
 		if pt.IsLabel {
-			label[pt.LabelName] = tidyLabelValue(fmt.Sprint(fieldValue))
+			parsedLabels[pt.LabelName] = tidyLabelValue(strValue)
 		}
 		// 指标字段解析成样本对象
 		if pt.IsMetric {
@@ -162,18 +178,18 @@ func Parse(s any, mnPrefix string, externalLabels ...map[string]string) ([]*Samp
 
 			// 设置指标值
 			// 可解析成float64的值的样本
-			if fv, err := strconv.ParseFloat(fmt.Sprint(fieldValue), 64); err == nil {
+			if fv, err := strconv.ParseFloat(strValue, 64); err == nil {
 				s := NewSample(pt.Help, pt.Type, metricName, nil, fv, pt.ValuePrecision)
 				samples = append(samples, s)
 				// 可解析成bool的值的样本
-			} else if bv, err := strconv.ParseBool(fmt.Sprint(fieldValue)); err == nil {
+			} else if bv, err := strconv.ParseBool(strValue); err == nil {
 				s := NewSample(pt.Help, pt.Type, metricName, nil, 0, pt.ValuePrecision)
 				if bv {
 					s.Value = 1
 				}
 				samples = append(samples, s)
 			} else {
-				msg := fmt.Sprintf("不可用的指标字段(%s)的值(%s) 必须是一个可float/bool的字段", fieldName, fmt.Sprint(fieldValue))
+				msg := fmt.Sprintf("不可用的指标字段(%s)的值(%s) 必须是一个可float/bool的字段", fieldName, strValue)
 				return nil, PromError{msg}
 			}
 			// 同时是指标和标签， 添加到待删除标签中
@@ -183,9 +199,9 @@ func Parse(s any, mnPrefix string, externalLabels ...map[string]string) ([]*Samp
 		}
 	}
 	// 添加 metric 标签
-	labels := append(externalLabels, label)
+	allLabels := append(externalLabels, parsedLabels)
 	for _, sample := range samples {
-		sample.addLabel(labels...)
+		sample.addLabel(allLabels...)
 		// 删除排除的标签
 		sample.deleteLabel([]string{excludeLabel[sample.MetricName]})
 
