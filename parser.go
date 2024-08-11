@@ -147,13 +147,8 @@ func Parse(s any, mnPrefix string, externalLabels ...map[string]string) ([]*Samp
 	for i := 0; i < reflectType.NumField(); i++ {
 		fieldName := reflectType.Field(i).Name
 		fieldValue := reflectValue.FieldByName(fieldName)
-		var strValue string
-		if fieldValue.CanInterface() && fieldValue.Interface() != nil {
-			strValue = fmt.Sprint(fieldValue.Interface())
-			// 使用 strValue 进行后续操作
-		} else {
-			return nil, PromError{"字段 " + fieldName + " 的值无法转换为字符串"}
-		}
+		strValue := fmt.Sprint(fieldValue)
+
 		pt := parseTag(reflectType.Field(i).Tag.Get("prom"))
 
 		// 忽略
